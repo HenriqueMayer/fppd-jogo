@@ -1,7 +1,3 @@
-// Define a struct que guardará o estado do jogo.
-// Define um método "placeholder" que será exposto via RPC.
-// Inicia um servidor RPC que escuta por conexões de rede em uma porta específica.
-
 package main
 
 import (
@@ -13,26 +9,21 @@ import (
 	"os"
 	"sync"
 
-	"jogo/shared" // Certifique-se que o nome do módulo em go.mod é "jogo"
+	"jogo/shared"
 )
 
-// JogoServidor é a struct principal do nosso servidor.
-// Ela vai guardar o estado do jogo e o mutex para controle de concorrência.
 type JogoServidor struct {
 	mutex     sync.Mutex
 	estado    shared.EstadoJogo
 	proximoID int
 }
 
-// jogoCarregarMapaLadoServidor: lê um arquivo e constrói o mapa do jogo.
-// É quase idêntico ao original, mas adaptado para as structs do pacote 'shared'.
 func (js *JogoServidor) jogoCarregarMapaLadoServidor(caminhoArquivo string) error {
 	arq, err := os.Open(caminhoArquivo)
 	if err != nil {
 		return err
 	}
 	defer arq.Close()
-
 	scanner := bufio.NewScanner(arq)
 	y := 0
 	for scanner.Scan() {
@@ -40,15 +31,11 @@ func (js *JogoServidor) jogoCarregarMapaLadoServidor(caminhoArquivo string) erro
 		var linhaElems []shared.Elemento
 		for _, ch := range linha {
 			var e shared.Elemento
-			// Define os elementos do mapa com base nos caracteres do arquivo.
-			// As cores são representadas por inteiros simples.
 			switch ch {
 			case '▤':
-				e = shared.Elemento{Simbolo: ch, Cor: 8, CorFundo: 0, Tangivel: true} // Cinza escuro sobre preto
+				e = shared.Elemento{Simbolo: ch, Cor: 8, CorFundo: 0, Tangivel: true}
 			case '♣':
-				e = shared.Elemento{Simbolo: ch, Cor: 2, CorFundo: 0, Tangivel: false} // Verde sobre preto
-			// Ignoramos o personagem e inimigo do mapa, pois eles serão dinâmicos.
-			// Qualquer outro caractere vira um espaço vazio.
+				e = shared.Elemento{Simbolo: ch, Cor: 2, CorFundo: 0, Tangivel: false}
 			default:
 				e = shared.Elemento{Simbolo: ' ', Cor: 0, CorFundo: 0, Tangivel: false}
 			}
@@ -60,88 +47,105 @@ func (js *JogoServidor) jogoCarregarMapaLadoServidor(caminhoArquivo string) erro
 	return scanner.Err()
 }
 
-// NovoJogoServidor cria e inicializa uma nova instância do nosso servidor.
 func NovoJogoServidor() *JogoServidor {
-	js := &JogoServidor{
-		proximoID: 1, // O primeiro jogador terá ID 1
-	}
-	// Importante: mapas em Go precisam ser inicializados antes do uso.
+	js := &JogoServidor{proximoID: 1}
 	js.estado.Jogadores = make(map[int]shared.Jogador)
-
-	// Carrega o mapa do jogo.
-	// O caminho é relativo à raiz do projeto, de onde executamos o 'go run'.
 	if err := js.jogoCarregarMapaLadoServidor("game/mapa.txt"); err != nil {
-		// Se o mapa não puder ser carregado, o servidor não pode iniciar.
 		log.Fatalf("Falha ao carregar o mapa: %v", err)
 	}
 	log.Println("Mapa do jogo carregado com sucesso.")
-
 	return js
 }
 
-// RegistrarNovoJogador é o método RPC que um cliente chama para entrar no jogo.
 func (js *JogoServidor) RegistrarNovoJogador(args *struct{}, reply *shared.RespostaServidorRPC) error {
-	// 1. Trava o mutex! Essencial para proteger o estado de acessos concorrentes.
 	js.mutex.Lock()
-	// 2. 'defer' garante que o mutex será destravado no final da função, não importa o que aconteça.
 	defer js.mutex.Unlock()
-
-	// 3. Cria um novo jogador
 	novoID := js.proximoID
-	posX, posY := 5, 10 // Posição inicial fixa (poderia ser aleatória)
-
+	posX, posY := 5, 10
 	novoJogador := shared.Jogador{
-		ID:   novoID,
-		PosX: posX,
-		PosY: posY,
-		Elemento: shared.Elemento{
-			Simbolo: '☺',
-			Cor:     7, // Cor branca
-		},
-		// O 'UltimoVisitado' será o elemento que está no mapa nessa posição inicial.
+		ID:             novoID,
+		PosX:           posX,
+		PosY:           posY,
+		Elemento:       shared.Elemento{Simbolo: '☺', Cor: 7},
 		UltimoVisitado: js.estado.Mapa[posY][posX],
 	}
-
-	// 4. Adiciona o novo jogador ao estado do jogo
 	js.estado.Jogadores[novoID] = novoJogador
-	js.proximoID++ // Incrementa o ID para o próximo jogador
-
-	// 5. Preenche a resposta que será enviada de volta para o cliente
+	js.proximoID++
 	reply.JogadorID = novoID
-	reply.Estado = js.estado // Envia a "fotografia" completa e atual do jogo
+	reply.Estado = js.estado
+	log.Printf("Jogador %d registrado em (%d, %d). Total: %d", novoID, posX, posY, len(js.estado.Jogadores))
+	return nil
+}
 
-	log.Printf("Jogador %d registrado com sucesso em (%d, %d).", novoID, novoJogador.PosX, novoJogador.PosY)
-	log.Printf("Total de jogadores agora: %d", len(js.estado.Jogadores))
+func (js *JogoServidor) GetEstadoJogo(args *struct{}, reply *shared.EstadoJogo) error {
+	js.mutex.Lock()
+	defer js.mutex.Unlock()
+	*reply = js.estado
+	return nil
+}
 
-	// 6. Retorna 'nil' para indicar que a operação RPC foi um sucesso.
+func (js *JogoServidor) MoverJogador(args *shared.MoverRPC, reply *struct{}) error {
+	js.mutex.Lock()
+	defer js.mutex.Unlock()
+
+	jogador, ok := js.estado.Jogadores[args.JogadorID]
+	if !ok {
+		return fmt.Errorf("jogador com ID %d não encontrado", args.JogadorID)
+	}
+
+	if args.SequenceNumber <= jogador.UltimoSequenceNumber {
+		log.Printf("Comando duplicado do jogador %d. Seq: %d, último: %d. Ignorando.", args.JogadorID, args.SequenceNumber, jogador.UltimoSequenceNumber)
+		return nil
+	}
+	jogador.UltimoSequenceNumber = args.SequenceNumber
+
+	dx, dy := 0, 0
+	switch args.Tecla {
+	case 'w':
+		dy = -1
+	case 'a':
+		dx = -1
+	case 's':
+		dy = 1
+	case 'd':
+		dx = 1
+	}
+	novaPosX, novaPosY := jogador.PosX+dx, jogador.PosY+dy
+
+	movimentoValido := true
+	if novaPosY < 0 || novaPosY >= len(js.estado.Mapa) || novaPosX < 0 || novaPosX >= len(js.estado.Mapa[novaPosY]) || js.estado.Mapa[novaPosY][novaPosX].Tangivel {
+		movimentoValido = false
+	}
+	if movimentoValido {
+		for _, outroJogador := range js.estado.Jogadores {
+			if outroJogador.ID != jogador.ID && novaPosX == outroJogador.PosX && novaPosY == outroJogador.PosY {
+				movimentoValido = false
+				break
+			}
+		}
+	}
+
+	if movimentoValido {
+		jogador.PosX = novaPosX
+		jogador.PosY = novaPosY
+		log.Printf("Jogador %d moveu-se para (%d, %d) [Seq: %d]", args.JogadorID, novaPosX, novaPosY, args.SequenceNumber)
+	}
+
+	js.estado.Jogadores[args.JogadorID] = jogador
 	return nil
 }
 
 func main() {
-	// Cria uma nova instância do nosso servidor de jogo.
 	jogoServidor := NovoJogoServidor()
-
-	// Registra a instância do jogo no sistema RPC.
-	// Isso torna os métodos exportados (com letra maiúscula) de JogoServidor
-	// disponíveis para serem chamados remotamente.
 	rpc.Register(jogoServidor)
 	log.Println("Servidor de Jogo RPC registrado.")
-
-	// Cria um "listener" de rede na porta TCP 1234.
-	// O servidor vai "escutar" por conexões nesta porta.
 	porta := ":1234"
 	listener, err := net.Listen("tcp", porta)
 	if err != nil {
 		log.Fatal("Erro ao escutar na porta: ", err)
 	}
-	// Garante que o listener será fechado quando a função main terminar.
 	defer listener.Close()
 	log.Printf("Servidor escutando na porta %s", porta)
-
-	fmt.Println("Pressione Ctrl+C para encerrar o servidor.")
-
-	// Loop infinito para aceitar conexões de clientes.
-	// A função rpc.Accept é bloqueante e lida com cada cliente
-	// em uma nova goroutine automaticamente.
+	fmt.Println("Pressione Ctrl+C para encerrar.")
 	rpc.Accept(listener)
 }
