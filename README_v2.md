@@ -35,7 +35,3 @@
     ```
 4. Implementando o Client.
 5. panic: nil pointer dereference
-    - Confirmar o Código: Eu vou te passar o código COMPLETO e final do client.go para esta etapa. Por favor, apague todo o conteúdo do seu arquivo e cole este. Isso elimina qualquer chance de ter uma mistura de versões antigas e novas.
-    Adicionar Logs de Depuração: Vamos adicionar log.Println em pontos chave para provar se a conexão está sendo feita antes da goroutine ser chamada.
-    Executar um go clean: Vamos forçar o Go a reconstruir tudo do zero, para o caso de algum cache de compilação estar causando o problema.
-6. 

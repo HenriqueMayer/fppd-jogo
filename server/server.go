@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"log"
 	"net"
 	"net/rpc"
@@ -18,6 +17,7 @@ type JogoServidor struct {
 	proximoID int
 }
 
+// carrega o mapa de um arquivo txt
 func (js *JogoServidor) jogoCarregarMapaLadoServidor(caminhoArquivo string) error {
 	arq, err := os.Open(caminhoArquivo)
 	if err != nil {
@@ -25,7 +25,7 @@ func (js *JogoServidor) jogoCarregarMapaLadoServidor(caminhoArquivo string) erro
 	}
 	defer arq.Close()
 	scanner := bufio.NewScanner(arq)
-	y := 0
+
 	for scanner.Scan() {
 		linha := scanner.Text()
 		var linhaElems []shared.Elemento
@@ -33,16 +33,15 @@ func (js *JogoServidor) jogoCarregarMapaLadoServidor(caminhoArquivo string) erro
 			var e shared.Elemento
 			switch ch {
 			case '▤':
-				e = shared.Elemento{Simbolo: ch, Cor: 8, CorFundo: 0, Tangivel: true}
+				e = shared.Elemento{Simbolo: ch, Tangivel: true}
 			case '♣':
-				e = shared.Elemento{Simbolo: ch, Cor: 2, CorFundo: 0, Tangivel: false}
+				e = shared.Elemento{Simbolo: ch, Tangivel: false}
 			default:
-				e = shared.Elemento{Simbolo: ' ', Cor: 0, CorFundo: 0, Tangivel: false}
+				e = shared.Elemento{Simbolo: ' ', Tangivel: false}
 			}
 			linhaElems = append(linhaElems, e)
 		}
 		js.estado.Mapa = append(js.estado.Mapa, linhaElems)
-		y++
 	}
 	return scanner.Err()
 }
@@ -51,29 +50,32 @@ func NovoJogoServidor() *JogoServidor {
 	js := &JogoServidor{proximoID: 1}
 	js.estado.Jogadores = make(map[int]shared.Jogador)
 	if err := js.jogoCarregarMapaLadoServidor("game/mapa.txt"); err != nil {
-		log.Fatalf("Falha ao carregar o mapa: %v", err)
+		log.Fatalf("Nao consegui carregar o mapa: %v", err)
 	}
-	log.Println("Mapa do jogo carregado com sucesso.")
+	log.Println("Mapa carregado")
 	return js
 }
+
+// -- Metodos RPC --
 
 func (js *JogoServidor) RegistrarNovoJogador(args *struct{}, reply *shared.RespostaServidorRPC) error {
 	js.mutex.Lock()
 	defer js.mutex.Unlock()
+
 	novoID := js.proximoID
-	posX, posY := 5, 10
 	novoJogador := shared.Jogador{
-		ID:             novoID,
-		PosX:           posX,
-		PosY:           posY,
-		Elemento:       shared.Elemento{Simbolo: '☺', Cor: 7},
-		UltimoVisitado: js.estado.Mapa[posY][posX],
+		ID:       novoID,
+		PosX:     5,
+		PosY:     10,
+		Elemento: shared.Elemento{Simbolo: '☺'},
 	}
+
 	js.estado.Jogadores[novoID] = novoJogador
 	js.proximoID++
+
 	reply.JogadorID = novoID
 	reply.Estado = js.estado
-	log.Printf("Jogador %d registrado em (%d, %d). Total: %d", novoID, posX, posY, len(js.estado.Jogadores))
+	log.Printf("Jogador %d entrou", novoID)
 	return nil
 }
 
@@ -90,11 +92,11 @@ func (js *JogoServidor) MoverJogador(args *shared.MoverRPC, reply *struct{}) err
 
 	jogador, ok := js.estado.Jogadores[args.JogadorID]
 	if !ok {
-		return fmt.Errorf("jogador com ID %d não encontrado", args.JogadorID)
+		return nil // jogador nao existe mais, ignora
 	}
 
+	// logica pra nao processar o mesmo comando duas vezes
 	if args.SequenceNumber <= jogador.UltimoSequenceNumber {
-		log.Printf("Comando duplicado do jogador %d. Seq: %d, último: %d. Ignorando.", args.JogadorID, args.SequenceNumber, jogador.UltimoSequenceNumber)
 		return nil
 	}
 	jogador.UltimoSequenceNumber = args.SequenceNumber
@@ -113,9 +115,12 @@ func (js *JogoServidor) MoverJogador(args *shared.MoverRPC, reply *struct{}) err
 	novaPosX, novaPosY := jogador.PosX+dx, jogador.PosY+dy
 
 	movimentoValido := true
+	// checa se ta dentro do mapa e se nao eh parede
 	if novaPosY < 0 || novaPosY >= len(js.estado.Mapa) || novaPosX < 0 || novaPosX >= len(js.estado.Mapa[novaPosY]) || js.estado.Mapa[novaPosY][novaPosX].Tangivel {
 		movimentoValido = false
 	}
+
+	// checa se nao bateu em outro jogador
 	if movimentoValido {
 		for _, outroJogador := range js.estado.Jogadores {
 			if outroJogador.ID != jogador.ID && novaPosX == outroJogador.PosX && novaPosY == outroJogador.PosY {
@@ -128,7 +133,6 @@ func (js *JogoServidor) MoverJogador(args *shared.MoverRPC, reply *struct{}) err
 	if movimentoValido {
 		jogador.PosX = novaPosX
 		jogador.PosY = novaPosY
-		log.Printf("Jogador %d moveu-se para (%d, %d) [Seq: %d]", args.JogadorID, novaPosX, novaPosY, args.SequenceNumber)
 	}
 
 	js.estado.Jogadores[args.JogadorID] = jogador
@@ -138,14 +142,13 @@ func (js *JogoServidor) MoverJogador(args *shared.MoverRPC, reply *struct{}) err
 func main() {
 	jogoServidor := NovoJogoServidor()
 	rpc.Register(jogoServidor)
-	log.Println("Servidor de Jogo RPC registrado.")
 	porta := ":1234"
 	listener, err := net.Listen("tcp", porta)
 	if err != nil {
-		log.Fatal("Erro ao escutar na porta: ", err)
+		log.Fatal("Erro na porta: ", err)
 	}
 	defer listener.Close()
+
 	log.Printf("Servidor escutando na porta %s", porta)
-	fmt.Println("Pressione Ctrl+C para encerrar.")
 	rpc.Accept(listener)
 }

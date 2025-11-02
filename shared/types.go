@@ -1,6 +1,6 @@
 package shared
 
-// Elemento: representa um item no mapa.
+// Elemento representa um item no mapa
 type Elemento struct {
 	Simbolo  rune
 	Cor      int
@@ -8,30 +8,30 @@ type Elemento struct {
 	Tangivel bool
 }
 
-// Jogador: representa o estado de um jogador.
+// Jogador guarda o estado de um jogador
 type Jogador struct {
 	ID                   int
 	Elemento             Elemento
 	PosX, PosY           int
 	UltimoVisitado       Elemento
 	Vidas                int
-	UltimoSequenceNumber int64
+	UltimoSequenceNumber int64 // para o servidor saber qual foi o ultimo comando
 }
 
-// EstadoJogo: o que o servidor vai enviar para o cliente.
+// EstadoJogo é o pacotão de dados que o servidor manda pros clientes
 type EstadoJogo struct {
 	Mapa      [][]Elemento
 	Jogadores map[int]Jogador
 }
 
-// MoverRPC: contém os argumentos para a chamada RPC de movimento.
+// MoverRPC é o que o cliente manda pro servidor quando quer se mover
 type MoverRPC struct {
 	JogadorID      int
 	Tecla          rune
 	SequenceNumber int64
 }
 
-// RespostaServidorRPC: é a resposta do servidor a um novo jogador.
+// RespostaServidorRPC é a resposta do servidor quando um novo jogador entra
 type RespostaServidorRPC struct {
 	JogadorID int
 	Estado    EstadoJogo
